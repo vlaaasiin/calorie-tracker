@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Счётчик калорий</title>
+  <!-- Подключение Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background-color: var(--tg-theme-bg-color, #f8fafc);
+      color: var(--tg-theme-text-color, #0f172a);
+    }
+  </style>
+</head>
+<body class="p-4 font-sans">
+  <div class="max-w-md mx-auto">
+    <!-- Шапка профиля -->
+    <div class="flex justify-between items-center mb-6">
+      <div>
+        <h1 class="text-xl font-bold" id="userName">Привет!</h1>
+        <p class="text-xs text-slate-500">Следи за питанием сегодня</p>
+      </div>
+      <div class="text-right">
+        <span class="text-xs text-slate-500">Норма:</span>
+        <div class="font-bold text-sm" id="dailyGoalDisplay">2000 ккал</div>
+      </div>
+    </div>
+
+    <!-- Карточка прогресса -->
+    <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 mb-6">
+      <div class="flex justify-between text-sm mb-2">
+        <span class="font-medium text-slate-600">Потреблено</span>
+        <span class="font-bold" id="consumedDisplay">0 / 2000 ккал</span>
+      </div>
+      <!-- Прогресс-бар -->
+      <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+        <div id="progressBar" class="bg-emerald-500 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+      </div>
+      <div class="text-xs text-slate-400 mt-2 text-right" id="remainingDisplay">Осталось: 2000 ккал</div>
+    </div>
+
+    <!-- Форма добавления -->
+    <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 mb-6">
+      <h2 class="text-sm font-semibold mb-3">Добавить приём пищи</h2>
+      <div class="flex gap-2 mb-3">
+        <input id="foodName" type="text" placeholder="Название (напр. Овсянка)" class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-500">
+        <input id="foodCalories" type="number" placeholder="ккал" class="w-24 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-500">
+      </div>
+      <button onclick="addEntry()" class="w-full bg-emerald-500 hover:bg-emerald-600 active:scale-95 transition text-white font-medium py-2 rounded-xl text-sm">
+        Добавить
+      </button>
+    </div>
+
+    <!-- Список за сегодня -->
+    <div>
+      <h2 class="text-sm font-semibold mb-3 text-slate-600">Сегодня съедено:</h2>
+      <div id="mealsList" class="space-y-2">
+        <!-- Записи добавляются сюда через JS -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand(); // Разворачиваем окно на весь экран
+
+    // Подставляем имя из Telegram
+    if (tg.initDataUnsafe?.user?.first_name) {
+      document.getElementById('userName').innerText = `Привет, ${tg.initDataUnsafe.user.first_name}!`;
+    }
+
+    const DAILY_GOAL = 2000;
+    let meals = JSON.parse(localStorage.getItem('cal_meals') || '[]');
+
+    function saveAndRender() {
+      localStorage.setItem('cal_meals', JSON.stringify(meals));
+      const total = meals.reduce((sum, item) => sum + item.cals, 0);
+
+      document.getElementById('consumedDisplay').innerText = `${total} / ${DAILY_GOAL} ккал`;
+      const remaining = DAILY_GOAL - total;
+      document.getElementById('remainingDisplay').innerText = remaining >= 0 
+        ? `Осталось: ${remaining} ккал` 
+        : `Превышение на: ${Math.abs(remaining)} ккал`;
+
+      const percent = Math.min(100, Math.round((total / DAILY_GOAL) * 100));
+      const bar = document.getElementById('progressBar');
+      bar.style.width = `${percent}%`;
+      bar.className = remaining >= 0 
+        ? 'bg-emerald-500 h-3 rounded-full transition-all duration-300' 
+        : 'bg-rose-500 h-3 rounded-full transition-all duration-300';
+
+      const listContainer = document.getElementById('mealsList');
+      listContainer.innerHTML = '';
+
+      if (meals.length === 0) {
+        listContainer.innerHTML = '<div class="text-center py-6 text-xs text-slate-400">Пока ничего не добавлено</div>';
+        return;
+      }
+
+      meals.forEach((meal, index) => {
+        const item = document.createElement('div');
+        item.className = 'flex justify-between items-center p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm';
+        item.innerHTML = `
+          <div>
+            <div class="font-medium">${meal.name}</div>
+            <div class="text-xs text-slate-400">${meal.time}</div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="font-bold text-slate-700">${meal.cals} ккал</span>
+            <button onclick="removeEntry(${index})" class="text-slate-300 hover:text-rose-500 text-xs">✕</button>
+          </div>
+        `;
+        listContainer.appendChild(item);
+      });
+    }
+
+    function addEntry() {
+      const nameInput = document.getElementById('foodName');
+      const calInput = document.getElementById('foodCalories');
+      const name = nameInput.value.trim();
+      const cals = parseInt(calInput.value);
+
+      if (!name || isNaN(cals) || cals <= 0) return;
+
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      meals.unshift({ name, cals, time });
+      nameInput.value = '';
+      calInput.value = '';
+
+      // Легкая вибрация через Telegram Haptics API
+      if (tg.HapticFeedback) {
+        tg.HapticFeedback.impactOccurred('light');
+      }
+
+      saveAndRender();
+    }
+
+    function removeEntry(index) {
+      meals.splice(index, 1);
+      if (tg.HapticFeedback) {
+        tg.HapticFeedback.notificationOccurred('warning');
+      }
+      saveAndRender();
+    }
+
+    saveAndRender();
+  </script>
+</body>
+</html>
